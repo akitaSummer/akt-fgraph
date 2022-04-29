@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-
+import { wrap, transfer, Remote } from "comlink";
 import * as d3 from "d3";
-
 import {
   RenderTexture,
   BaseRenderTexture,
@@ -17,6 +16,12 @@ import {
 } from "pixi.js";
 
 import SmoothFollow from "../utils/SmoothFollow";
+
+const workerFactory = wrap<typeof import("../workers/d3.worker").D3Computor>(
+  new Worker(new URL("../workers/d3.worker.ts", import.meta.url), {
+    type: "module",
+  })
+);
 
 type Data = any;
 
@@ -44,18 +49,29 @@ let simulation: d3.Simulation<d3.SimulationNodeDatum, undefined>;
 
 let app: Application;
 
-let gfxIDMap: { [key: string]: Sprite } = {};
+let gfxIDMap: { [key: string]: GraphSprite } = {};
 
-let gfxMap: WeakMap<any, Sprite> = new WeakMap();
+let gfxMap: WeakMap<any, GraphSprite> = new WeakMap();
 
-let nodeMap: WeakMap<Sprite, any> = new WeakMap();
+let nodeMap: WeakMap<GraphSprite, any> = new WeakMap();
+
+let worker: Remote<import("../workers/d3.worker").D3Computor>;
+
+let nodesBuffer: Float32Array;
 
 export interface GraphProps {
   data: Data;
 }
 
+interface GraphSprite extends Sprite {
+  dragging: boolean;
+  smoothFollowX: SmoothFollow;
+  smoothFollowY: SmoothFollow;
+}
+
 const Graph: React.FC<GraphProps> = (props) => {
   const root = useRef<HTMLCanvasElement>(null);
+  const [sendTime, setSendTime] = useState<number>(0);
   const init = () => {
     if (root.current) {
       data = props.data;
@@ -68,6 +84,36 @@ const Graph: React.FC<GraphProps> = (props) => {
         antialias: true,
         view: root.current,
         resolution: window.devicePixelRatio || 1,
+      });
+      if (!(worker instanceof Promise)) {
+        //@ts-ignore
+        worker = new workerFactory().then(async (w) => {
+          setSendTime(Date.now());
+          worker = w;
+          nodesBuffer = new Float32Array(data.nodes.length * 2);
+          nodesBuffer = await worker.createSimulation(
+            data,
+            {
+              alpha: ALPHA,
+              alphaDecay: ALPHA_DECAY,
+              alphaTarget: ALPHA_TARGET,
+              iterations: 1,
+              nodeRepulsionStrength: FORCE_LAYOUT_NODE_REPULSION_STRENGTH,
+              width: window.innerWidth,
+              height: window.innerHeight,
+            },
+            transfer(nodesBuffer, [nodesBuffer.buffer])
+          );
+
+          updateNodesFromBuffer();
+        });
+      }
+
+      window.addEventListener("resize", function () {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        renderer.resize(width, height);
+        updateMainThreadSimulation(width, height);
       });
 
       renderer = app.renderer;
@@ -97,7 +143,7 @@ const Graph: React.FC<GraphProps> = (props) => {
       renderer.render(graphics, texture);
 
       data.nodes.forEach((node) => {
-        const gfx = new Sprite(texture);
+        const gfx = new Sprite(texture) as GraphSprite;
         gfx.anchor.set(0.5);
         gfx.interactive = true;
         gfx.buttonMode = true;
@@ -131,19 +177,64 @@ const Graph: React.FC<GraphProps> = (props) => {
         .alphaDecay(ALPHA_DECAY)
         .alphaTarget(ALPHA_TARGET);
 
-      simulation
-        .force(
-          "charge",
-          d3.forceManyBody().strength(-FORCE_LAYOUT_NODE_REPULSION_STRENGTH)
-        )
-        .force(
-          "center",
-          d3.forceCenter(window.innerWidth / 2, window.innerHeight / 2)
-        )
-        // .tick(FORCE_LAYOUT_ITERATIONS)
-        // .on('tick', updatePositionsFromMainThreadSimulation)
-        .stop();
+      updateMainThreadSimulation(window.innerWidth, window.innerHeight);
     }
+  };
+
+  const updateMainThreadSimulation = (width: number, height: number) => {
+    // const { nodes, links } = graph;
+
+    simulation
+      .force(
+        "charge",
+        d3.forceManyBody().strength(-FORCE_LAYOUT_NODE_REPULSION_STRENGTH)
+      )
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      // .tick(FORCE_LAYOUT_ITERATIONS)
+      // .on('tick', updatePositionsFromMainThreadSimulation)
+      .stop();
+  };
+
+  const updateWorkerBuffers = async () => {
+    if (worker) {
+      setSendTime(Date.now());
+      nodesBuffer = await worker.updateWorkerBuffers(
+        {
+          iterations: 1,
+          nodeRepulsionStrength: FORCE_LAYOUT_NODE_REPULSION_STRENGTH,
+          width: window.innerWidth,
+          height: window.innerHeight,
+        },
+        transfer(nodesBuffer, [nodesBuffer.buffer])
+      );
+
+      updateNodesFromBuffer();
+    }
+  };
+
+  const updateNodesFromBuffer = () => {
+    for (var i = 0; i < data.nodes.length; i++) {
+      const node = data.nodes[i];
+      //   if (draggingNode !== node) {
+      // const gfx = gfxMap.get(node);
+      const gfx = gfxIDMap[node.id];
+      // gfx.position = new PIXI.Point(x, y);
+
+      // if (true) {
+      gfx.smoothFollowX.set((node.x = nodesBuffer[i * 2 + 0]));
+      gfx.smoothFollowY.set((node.y = nodesBuffer[i * 2 + 1]));
+      // } else {
+      //   gfx.position.x = node.x = nodesBuffer[i * 2 + 0];
+      //   gfx.position.y = node.y = nodesBuffer[i * 2 + 1];
+      // }
+      //   }
+    }
+
+    let delay = delta * 1000 - (Date.now() - sendTime);
+    if (delay < 0) {
+      delay = 0;
+    }
+    setTimeout(updateWorkerBuffers, delay);
   };
 
   const updateInterpolatedPositions = () => {
@@ -196,7 +287,8 @@ const Graph: React.FC<GraphProps> = (props) => {
   const render = () => {
     if (renderer && stage) {
       updateInterpolatedPositions();
-      updatePositionsFromMainThreadSimulation();
+
+      //   updatePositionsFromMainThreadSimulation();
       drawLines();
       renderer.render(stage);
     }
