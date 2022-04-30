@@ -13,7 +13,10 @@ import {
   Renderer,
   AbstractRenderer,
   autoDetectRenderer,
+  InteractionData,
 } from "pixi.js";
+
+import EventEmitter from "eventemitter3";
 
 import SmoothFollow from "../utils/SmoothFollow";
 
@@ -59,6 +62,10 @@ let worker: Remote<import("../workers/d3.worker").D3Computor>;
 
 let nodesBuffer: Float32Array;
 
+let draggingNode: any;
+
+let draggingNodeGraphSprite: GraphSprite;
+
 export interface GraphProps {
   data: Data;
 }
@@ -67,6 +74,7 @@ interface GraphSprite extends Sprite {
   dragging: boolean;
   smoothFollowX: SmoothFollow;
   smoothFollowY: SmoothFollow;
+  data?: InteractionData;
 }
 
 const Graph: React.FC<GraphProps> = (props) => {
@@ -121,6 +129,7 @@ const Graph: React.FC<GraphProps> = (props) => {
       stage = new Container();
       container = new Container();
       stage.addChild(container);
+      container.mask = null;
       linksGfx = new Graphics();
       linksGfx.alpha = 0.6;
       container.addChild(linksGfx);
@@ -139,8 +148,9 @@ const Graph: React.FC<GraphProps> = (props) => {
       graphics.drawCircle(0, 0, NODE_RADIUS);
       graphics.position.x = NODE_RADIUS + 1.0;
       graphics.position.y = NODE_RADIUS + 1.0;
-      // @ts-ignore
-      renderer.render(graphics, texture);
+      renderer.render(graphics, {
+        renderTexture: texture,
+      });
 
       data.nodes.forEach((node) => {
         const gfx = new Sprite(texture) as GraphSprite;
@@ -149,9 +159,9 @@ const Graph: React.FC<GraphProps> = (props) => {
         gfx.buttonMode = true;
         gfx.dragging = false;
         gfx.hitArea = new Circle(0, 0, NODE_HIT_RADIUS);
-        // gfx.on("pointerdown", onDragStart);
-        // gfx.on("pointerup", onDragEnd);
-        // gfx.on("pointerupoutside", onDragEnd);
+        gfx.on("pointerdown", onDragStart);
+        gfx.on("pointerup", onDragEnd);
+        gfx.on("pointerupoutside", onDragEnd);
         // gfx.on("pointermove", onDragMove);
         gfx.smoothFollowX = new SmoothFollow();
         gfx.smoothFollowY = new SmoothFollow();
@@ -215,19 +225,14 @@ const Graph: React.FC<GraphProps> = (props) => {
   const updateNodesFromBuffer = () => {
     for (var i = 0; i < data.nodes.length; i++) {
       const node = data.nodes[i];
-      //   if (draggingNode !== node) {
-      // const gfx = gfxMap.get(node);
-      const gfx = gfxIDMap[node.id];
-      // gfx.position = new PIXI.Point(x, y);
+      if (draggingNode !== node) {
+        // const gfx = gfxMap.get(node);
+        const gfx = gfxIDMap[node.id];
+        // gfx.position = new PIXI.Point(x, y);
 
-      // if (true) {
-      gfx.smoothFollowX.set((node.x = nodesBuffer[i * 2 + 0]));
-      gfx.smoothFollowY.set((node.y = nodesBuffer[i * 2 + 1]));
-      // } else {
-      //   gfx.position.x = node.x = nodesBuffer[i * 2 + 0];
-      //   gfx.position.y = node.y = nodesBuffer[i * 2 + 1];
-      // }
-      //   }
+        gfx.smoothFollowX.set((node.x = nodesBuffer[i * 2 + 0]));
+        gfx.smoothFollowY.set((node.y = nodesBuffer[i * 2 + 1]));
+      }
     }
 
     let delay = delta * 1000 - (Date.now() - sendTime);
@@ -241,13 +246,15 @@ const Graph: React.FC<GraphProps> = (props) => {
     if (data?.nodes) {
       for (let i = 0; i < data.nodes.length; i++) {
         const node = data.nodes[i];
-        // const gfx = gfxMap.get(node);
-        const gfx = gfxIDMap[node.id];
-        // gfx.position = new PIXI.Point(x, y);
-        gfx.smoothFollowX.loop(delta);
-        gfx.smoothFollowY.loop(delta);
-        gfx.position.x = gfx.smoothFollowX.getSmooth();
-        gfx.position.y = gfx.smoothFollowY.getSmooth();
+        if (draggingNode !== node) {
+          // const gfx = gfxMap.get(node);
+          const gfx = gfxIDMap[node.id];
+          // gfx.position = new PIXI.Point(x, y);
+          gfx.smoothFollowX.loop(delta);
+          gfx.smoothFollowY.loop(delta);
+          gfx.position.x = gfx.smoothFollowX.getSmooth();
+          gfx.position.y = gfx.smoothFollowY.getSmooth();
+        }
       }
     }
   };
@@ -293,6 +300,87 @@ const Graph: React.FC<GraphProps> = (props) => {
       renderer.render(stage);
     }
     requestAnimationFrame(render);
+  };
+
+  const onDragStart: EventEmitter.ListenerFn = (event) => {
+    draggingNode = nodeMap.get(event.target);
+
+    draggingNodeGraphSprite = event.target as GraphSprite;
+
+    const target = event.target as GraphSprite;
+    // console.log(target, draggingNode, event.global, "target");
+
+    target.data = event.data;
+    target.alpha = 0.5;
+    target.dragging = true;
+
+    target.dragOffset = target.data?.getLocalPosition(target.parent);
+    target.dragOffset.x -= target.position.x;
+    target.dragOffset.y -= target.position.y;
+
+    target.addListener("pointermove", onDragMove);
+
+    // enable node dragging
+    // app.renderer.plugins.interaction.on('mousemove', appMouseMove);
+
+    // disable viewport dragging
+    // viewport.pause = true;
+  };
+
+  const onDragMove: EventEmitter.ListenerFn = (event) => {
+    if (draggingNodeGraphSprite && draggingNode) {
+      const newPosition = draggingNodeGraphSprite.data?.getLocalPosition(
+        draggingNodeGraphSprite.parent
+      );
+      if (newPosition) {
+        draggingNode.fx =
+          draggingNode.x =
+          draggingNodeGraphSprite.x =
+            newPosition.x - draggingNodeGraphSprite.dragOffset.x;
+        draggingNode.fy =
+          draggingNode.y =
+          draggingNodeGraphSprite.y =
+            newPosition.y - draggingNodeGraphSprite.dragOffset.y;
+      }
+    }
+  };
+
+  const updateWorkerNodePositions = () => {
+    if (worker) {
+      worker.updateWorkerNodePositions(data.nodes);
+    }
+  };
+
+  const onDragEnd: EventEmitter.ListenerFn = (event) => {
+    if (draggingNode) {
+      draggingNodeGraphSprite.smoothFollowX.reset(
+        draggingNodeGraphSprite.position.x
+      );
+      draggingNodeGraphSprite.smoothFollowY.reset(
+        draggingNodeGraphSprite.position.y
+      );
+
+      updateWorkerNodePositions();
+
+      draggingNode.fx = null;
+      draggingNode.fy = null;
+    }
+
+    draggingNode = undefined;
+
+    draggingNodeGraphSprite.alpha = 1;
+    draggingNodeGraphSprite.dragging = false;
+    // set the interaction data to null
+    draggingNodeGraphSprite.data = null;
+
+    draggingNodeGraphSprite.removeListener("pointermove", onDragMove);
+
+    draggingNodeGraphSprite = undefined;
+
+    // disable node dragging
+    // app.renderer.plugins.interaction.off('mousemove', appMouseMove);
+    // enable viewport dragging
+    // viewport.pause = false;
   };
 
   useEffect(() => {

@@ -89,7 +89,7 @@ export class D3Computor {
   updateWorkerNodePositions(nodes: d3.SimulationNodeDatum[]) {
     if (this.simulation) {
       const n = this.simulation.nodes();
-      for (var i = 0; i < n.length; i++) {
+      for (let i = 0; i < n.length; i++) {
         n[i].x = nodes[i].x;
         n[i].y = nodes[i].y;
       }
