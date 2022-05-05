@@ -2,7 +2,12 @@ import { useState } from "react";
 import logo from "./logo.svg";
 import "./App.css";
 
-import testData from "./data.json";
+// 5000nodes 5000edges
+import testData from "./smallData.json";
+// 10000nodes 10000edges
+// import testData from "./data.json";
+// 20000nodes 20000edges
+// import testData from "./bigData.json";
 import Graph from "./components/Graph";
 
 function App() {
