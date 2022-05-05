@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { wrap, transfer, Remote } from "comlink";
 import * as d3 from "d3";
+import forceManyBody from '../utils/forceAlgorithm'
 import {
   RenderTexture,
   BaseRenderTexture,
@@ -197,7 +198,7 @@ const Graph: React.FC<GraphProps> = (props) => {
     simulation
       .force(
         "charge",
-        d3.forceManyBody().strength(-FORCE_LAYOUT_NODE_REPULSION_STRENGTH)
+        forceManyBody().strength(-FORCE_LAYOUT_NODE_REPULSION_STRENGTH)
       )
       .force("center", d3.forceCenter(width / 2, height / 2))
       // .tick(FORCE_LAYOUT_ITERATIONS)

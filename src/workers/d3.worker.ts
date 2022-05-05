@@ -2,6 +2,8 @@ import { expose, transfer } from "comlink";
 
 import * as d3 from "d3";
 
+import forceManyBody from '../utils/forceAlgorithm'
+
 type SetRequired<T, K extends keyof T> = T & {
   [P in K]-?: T[P];
 };
@@ -60,7 +62,7 @@ export class D3Computor {
           //@ts-ignore
           d3.forceLink(links).id((d) => d.id)
         )
-        .force("charge", d3.forceManyBody().strength(-nodeRepulsionStrength))
+        .force("charge", forceManyBody().strength(-nodeRepulsionStrength))
         .force("center", d3.forceCenter(width / 2, height / 2))
         .tick(iterations)
         .stop();

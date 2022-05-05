@@ -2,7 +2,7 @@ import { useState } from "react";
 import logo from "./logo.svg";
 import "./App.css";
 
-import testData from "./testData.json";
+import testData from "./data.json";
 import Graph from "./components/Graph";
 
 function App() {
